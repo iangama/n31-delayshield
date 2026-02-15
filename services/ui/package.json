@@ -1,0 +1,16 @@
+{
+  "name": "n31-delayshield-ui",
+  "private": true,
+  "version": "4.0.1",
+  "type": "module",
+  "scripts": { "dev": "vite --host 0.0.0.0 --port 5173" },
+  "dependencies": {
+    "maplibre-gl": "4.7.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.3.3",
+    "vite": "5.4.11"
+  }
+}

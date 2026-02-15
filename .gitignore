@@ -1,0 +1,23 @@
+# node
+node_modules/
+dist/
+.vite/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+*.sqlite3
+
+# docker/logs
+*.log
+
+# system
+.DS_Store
+Thumbs.db
+
+# secrets (NUNCA commitar)
+secrets/

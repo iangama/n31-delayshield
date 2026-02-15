@@ -1,0 +1,170 @@
+services:
+  traefik:
+    image: traefik:v3.1.4
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "8880:8880"
+      - "8443:8443"
+      - "8081:8081"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./infra/dynamic:/etc/traefik/dynamic:ro
+    labels:
+      - delayshield.stack=n31-delayshield
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/metrics >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  db:
+    image: postgres:16.5
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-delayshield}
+      POSTGRES_USER: ${POSTGRES_USER:-delayshield}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-delayshield}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./infra/sql:/docker-entrypoint-initdb.d:ro
+    labels:
+      - delayshield.stack=n31-delayshield
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4.1-alpine
+    labels:
+      - delayshield.stack=n31-delayshield
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: { context: ./services/api }
+    env_file: .env
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    labels:
+      - delayshield.stack=n31-delayshield
+      - traefik.enable=true
+
+      # ✅ API recebe /api/* direto (SEM STRIP)
+      - traefik.http.routers.api.rule=PathPrefix(`/api`) || PathPrefix(`/health`) || PathPrefix(`/metrics`)
+      - traefik.http.routers.api.entrypoints=web
+      - traefik.http.routers.api.priority=1000
+      - traefik.http.services.api.loadbalancer.server.port=8000
+    secrets:
+      - openrouteservice_api_key
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    build: { context: ./services/worker }
+    env_file: .env
+    command: ["bash","-lc","celery -A src.tasks worker --loglevel=INFO"]
+    depends_on:
+      api: { condition: service_healthy }
+    labels:
+      - delayshield.stack=n31-delayshield
+    secrets:
+      - openweather_api_key
+      - openrouteservice_api_key
+
+  worker_beat:
+    build: { context: ./services/worker }
+    env_file: .env
+    command: ["bash","-lc","celery -A src.beat beat --loglevel=INFO"]
+    depends_on:
+      worker:
+        condition: service_started
+    labels:
+      - delayshield.stack=n31-delayshield
+
+  ui:
+    build: { context: ./services/ui }
+    depends_on:
+      api: { condition: service_healthy }
+    labels:
+      - delayshield.stack=n31-delayshield
+      - traefik.enable=true
+      - traefik.http.routers.ui.rule=PathPrefix(`/`)
+      - traefik.http.routers.ui.entrypoints=web
+      - traefik.http.routers.ui.priority=10
+      - traefik.http.services.ui.loadbalancer.server.port=5173
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    labels:
+      - delayshield.stack=n31-delayshield
+      - traefik.enable=true
+      - traefik.http.routers.prom.rule=PathPrefix(`/prometheus`)
+      - traefik.http.routers.prom.entrypoints=web
+      - traefik.http.routers.prom.priority=200
+      - traefik.http.middlewares.prom-stripprefix.stripprefix.prefixes=/prometheus
+      - traefik.http.routers.prom.middlewares=prom-stripprefix
+      - traefik.http.services.prom.loadbalancer.server.port=9090
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+    labels:
+      - delayshield.stack=n31-delayshield
+      - traefik.enable=true
+      - traefik.http.routers.graf.rule=PathPrefix(`/grafana`)
+      - traefik.http.routers.graf.entrypoints=web
+      - traefik.http.routers.graf.priority=200
+      - traefik.http.middlewares.graf-stripprefix.stripprefix.prefixes=/grafana
+      - traefik.http.routers.graf.middlewares=graf-stripprefix
+      - traefik.http.services.graf.loadbalancer.server.port=3000
+
+  loki:
+    image: grafana/loki:3.2.0
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./infra/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    labels:
+      - delayshield.stack=n31-delayshield
+
+  promtail:
+    image: grafana/promtail:3.2.0
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./infra/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    labels:
+      - delayshield.stack=n31-delayshield
+
+secrets:
+  openweather_api_key:
+    file: ./secrets/openweather_api_key.txt
+  openrouteservice_api_key:
+    file: ./secrets/openrouteservice_api_key.txt
+
+volumes:
+  db_data:
+  grafana_data:
+  loki_data:

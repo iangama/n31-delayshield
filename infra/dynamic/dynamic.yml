@@ -1,0 +1,6 @@
+http:
+  routers:
+    traefik-dashboard:
+      entryPoints: ["traefik"]
+      rule: "PathPrefix(`/`)"
+      service: "api@internal"

@@ -1,0 +1,25 @@
+entryPoints:
+  web:
+    address: ":8880"
+  websecure:
+    address: ":8443"
+  traefik:
+    address: ":8081"
+
+api:
+  dashboard: true
+
+providers:
+  docker:
+    exposedByDefault: false
+    constraints: "Label(`delayshield.stack`,`n31-delayshield`)"
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+metrics:
+  prometheus:
+    entryPoint: traefik
+
+log:
+  level: INFO
